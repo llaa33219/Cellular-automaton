@@ -1,0 +1,1174 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>Game of Life - Many Rules</title>
+  <style>
+    html, body {
+      margin: 0; padding: 0;
+      overflow: hidden;
+      background: #222;
+      height: 100%;
+    }
+    #gameCanvas {
+      display: block;
+      background: #111;
+    }
+    #uiPanel {
+      position: fixed;
+      top: 10px; left: 10px;
+      padding: 8px;
+      background: rgba(0,0,0,0.6);
+      color: #fff;
+      font-family: sans-serif;
+      z-index: 999;
+      user-select: none;
+    }
+    #uiPanel label, #uiPanel select, #uiPanel input, #uiPanel button {
+      margin-right: 6px;
+    }
+    #uiPanel select,
+    #uiPanel input[type="number"],
+    #uiPanel input[type="text"] {
+      background: #333;
+      color: #fff;
+      border: 1px solid #666;
+      font: inherit;
+      padding: 2px 4px;
+    }
+    #uiPanel button {
+      background: #555;
+      color: #fff;
+      border: 1px solid #666;
+      cursor: pointer;
+    }
+    #uiPanel button:hover {
+      background: #777;
+    }
+    #customRuleInput {
+      width: 140px;
+    }
+  </style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+
+<div id="uiPanel">
+  <label for="ruleSelect">Select Rule:</label>
+  <select id="ruleSelect"></select>
+
+  <label for="brushSize">Brush Size:</label>
+  <input type="number" id="brushSize" min="1" max="50" value="3" />
+
+  <!-- 실행/멈춤 토글 버튼 -->
+  <button id="togglePlayBtn">Pause</button>
+  
+  <!-- 규칙을 무작위로 '진짜' 만들고, 텍스트박스에 표시 -->
+  <button id="randomBtn">Random Rule</button>
+  
+  <!-- 랜덤/사용자 정의 룰 문자열 표시 및 수정 -->
+  <input type="text" id="customRuleInput" placeholder="B3/S23/1" />
+
+  <!-- ◆◆◆ 추가: 보드 리셋(살아있는 셀만 제거) 버튼 ◆◆◆ -->
+  <button id="clearBoardBtn">Clear Board</button>
+</div>
+
+<script>
+//===================================================================
+// (1) 전역 설정 및 데이터 구조
+//===================================================================
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+let width = window.innerWidth;
+let height = window.innerHeight;
+canvas.width = width;
+canvas.height = height;
+
+const cellSize = 8;
+let cols = Math.floor(width / cellSize);
+let rows = Math.floor(height / cellSize);
+
+let isRunning = true;
+let mouseX = -9999, mouseY = -9999;
+let isMouseInside = false;
+let isMouseDown = false;
+
+let currentBrushSize = 3;
+
+// 보드: 각 셀 { state: number, ruleIndex: number }
+let board = createBoard(cols, rows);
+
+/**
+ * Rules 목록 (기본 프리셋 + 이후 커스텀도 추가됨)
+ */
+const rules = [
+  { label: "[0] Conway (B3/S23)",  
+    birth: [3],
+    survival: [2, 3],
+    color: '#FFFFFF',
+    states: 1
+  },
+  { label: "[1] HighLife (B36/S23)",  
+    birth: [3, 6],
+    survival: [2, 3],
+    color: '#FFA500',
+    states: 1
+  },
+  { label: "[2] Day&Night (B3678/S34678)",
+    birth: [3, 6, 7, 8],
+    survival: [3, 4, 6, 7, 8],
+    color: '#FFFF00',
+    states: 1
+  },
+  { label: "[3] Life w/o Death (B3/S012345678)",
+    birth: [3],
+    survival: [0,1,2,3,4,5,6,7,8],
+    color: '#7FFF00',
+    states: 1
+  },
+  { label: "[4] Seeds (B2/S)",
+    birth: [2],
+    survival: [],
+    color: '#40E0D0',
+    states: 1
+  },
+  { label: "[5] Maze (B3/S12345)",
+    birth: [3],
+    survival: [1,2,3,4,5],
+    color: '#0066FF',
+    states: 1
+  },
+  { label: "[6] 2x2 (B36/S125)",
+    birth: [3,6],
+    survival: [1,2,5],
+    color: '#AA00FF',
+    states: 1
+  },
+  { label: "[7] Move (B38/S23)",
+    birth: [3,8],
+    survival: [2,3],
+    color: '#FF1493',
+    states: 1
+  },
+  { label: "[8] Replicator (B1357/S1357)",
+    birth: [1,3,5,7],
+    survival: [1,3,5,7],
+    color: '#A0522D',
+    states: 1
+  },
+  { label: "[9] 34 Life (B34/S34)",
+    birth: [3,4],
+    survival: [3,4],
+    color: '#FFFFFF',
+    states: 1
+  },
+  { label: "[10] Diamoeba (B35678/S5678)",
+    birth: [3,5,6,7,8],
+    survival: [5,6,7,8],
+    color: '#FF0000',
+    states: 1
+  },
+  { label: "[11] Coral (B3/S45678)",
+    birth: [3],
+    survival: [4,5,6,7,8],
+    color: '#FFAACC',
+    states: 1
+  },
+  { label: "[12] Anneal (B4678/S35678)",
+    birth: [4,6,7,8],
+    survival: [3,5,6,7,8],
+    color: '#CCFF00',
+    states: 1
+  },
+  { label: "[13] Long Life (B345/S5)",
+    birth: [3,4,5],
+    survival: [5],
+    color: '#99FF99',
+    states: 1
+  },
+  { label: "[14] TPT Brian 6 (B246/S6/3)",
+    birth: [2,4,6],
+    survival: [6],
+    color: '#FF3333',
+    states: 3
+  },
+  { label: "[15] TPT Mystery (B3458/S05678)",
+    birth: [3,4,5,8],
+    survival: [0,5,6,7,8],
+    color: '#FF9900',
+    states: 1
+  },
+  { label: "[16] TPT Walled sities (B45678/S2345)",
+    birth: [4,5,6,7,8],
+    survival: [2,3,4,5],
+    color: '#FFFF33',
+    states: 1
+  },
+  { label: "[17] TPT Star (B278/S3456/6)",
+    birth: [2,7,8],
+    survival: [3,4,5,6],
+    color: '#2222FF',
+    states: 6  // 0~5
+  },
+  { label: "[18] TPT Diamoeba (B35678/S5678)",
+    birth: [3,5,6,7,8],
+    survival: [5,6,7,8],
+    color: '#AACC44',
+    states: 1
+  },
+  { label: "[19] TPT Assimilation (B345/S4567)",
+    birth: [3,4,5],
+    survival: [4,5,6,7],
+    color: '#22CC44',
+    states: 1
+  },
+  { label: "[20] Star Wars (B2/S34)",
+    birth: [2],
+    survival: [3,4],
+    color: '#DDDD22',
+    states: 1
+  },
+  // self made (important)
+  { label: "[21] Ancient cities (B278/S345678/7)",
+    birth: [2,7,8],
+    survival: [3,4,5,6,7,8],
+    color: '#888888',
+    states: 7
+  },
+  { label: "[22] Underground City (B24/S234)",
+    birth: [1,2],
+    survival: [2,3,4],
+    color: '#6F4F28',
+    states: 1
+  },
+  { label: "[23] Living Beauty (B23/S234/10)",
+    birth: [2,3],
+    survival: [2,3,4],
+    color: '#6F4F28',
+    states: 10
+  },
+  { label: "[24] Dark Clouds (B234/S234/10)",
+    birth: [2,3,4],
+    survival: [2,3,4],
+    color: '#AAAAAA',
+    states: 10
+  },
+  { label: "[25] Moving Clouds (B234/S235/10)",
+    birth: [2,3,4],
+    survival: [2,3,5],
+    color: '#AAAAAA',
+    states: 10
+  },
+  { label: "[26] Line (B234/S236/10)",
+    birth: [2,3,4],
+    survival: [2,3,6],
+    color: '#AAFFAA',
+    states: 10
+  },
+  { label: "[27] Motherboard (B234/S2345/10)",
+    birth: [2,3,4],
+    survival: [2,3,4,5],
+    color: '#008800',
+    states: 10
+  },
+  { label: "[28] Geometric Halftone Line (B234/S23456/10)",
+    birth: [2,3,4],
+    survival: [2,3,4,5,6],
+    color: '#882222',
+    states: 10
+  },
+  { label: "[29] Noise Maze (B234/S23456/10)",
+    birth: [2,3,4],
+    survival: [2,3,4,6,8],
+    color: '#888888',
+    states: 1
+  },
+  { label: "[30] Cheese (B4678/S234567)",
+    birth: [4,6,7,8],
+    survival: [2,3,4,5,6,7],
+    color: '#FFFF33',
+    states: 1
+  },
+  { label: "[31] Electric Wave (B1234567/S1234567/10)",
+    birth: [1,2,3,4,5,6,7],
+    survival: [1,2,3,4,5,6,7],
+    color: '#f3cd38',
+    states: 10
+  },
+  { label: "[32] Tunnel (B1234567/S1234567)",
+    birth: [1,2,3,4,5,6,7],
+    survival: [1,2,3,4,5,6,7],
+    color: '#445566',
+    states: 1
+  },
+  { label: "[33] Anthill (B123456/S123456)",
+    birth: [1,2,3,4,5,6],
+    survival: [1,2,3,4,5,6],
+    color: '#A0522D',
+    states: 1
+  },
+  { label: "[34] Octagon (B3458/S0234567/5)",
+    birth: [3,4,5,8],
+    survival: [0,2,3,4,5,6,7],
+    color: '#e0ef38',
+    states: 5
+  },
+  { label: "[35] Mold (B347/S124567/5)",
+    birth: [3,4,7],
+    survival: [1,2,4,5,6,7],
+    color: '#8472a8',
+    states: 5
+  },
+  { label: "[36] Rock (B056/S2345678/2)",
+    birth: [0,5,6],
+    survival: [2,3,4,5,6,7,8],
+    color: '#a8a8a8',
+    states: 2
+  },
+  { label: "[37] Angled Ice (B257/S2345678/3)",
+    birth: [2,5,7],
+    survival: [2,3,4,5,6,7,8],
+    color: '#72c6dd',
+    states: 3
+  },
+  { label: "[37] Conveyor Belt (B012/S2345/2)",
+    birth: [0,1,2],
+    survival: [2,3,4,5],
+    color: '#555555',
+    states: 2
+  },
+  { label: "[38] Sponge (B03678/S0234568/5)",
+    birth: [0,3,6,7,8],
+    survival: [0,2,3,4,5,6,8],
+    color: '#FFFF00',
+    states: 5
+  },
+  { label: "[39] Storm Line (B024678/S17/6)",
+    birth: [0,2,4,6,7,8],
+    survival: [1,7],
+    color: '#a3d7c2',
+    states: 6
+  },
+  { label: "[40] Paint (B1367/S045678/4)",
+    birth: [1,3,6,7],
+    survival: [0,4,5,6,7,8],
+    color: '#d8b0ff',
+    states: 4
+  },
+  { label: "[41] Just Line (B2358/S67/2)",
+    birth: [2,3,5,8],
+    survival: [6,7],
+    color: '#CC8400',
+    states: 2
+  },
+  { label: "[42] Storm (B02568/S1568/6)",
+    birth: [0,2,5,6,8],
+    survival: [1,5,6,8],
+    color: '#a3d7c2',
+    states: 6
+  },
+  { label: "[43] Poison (B158/S012356/6)",
+    birth: [1,5,8],
+    survival: [0,1,2,3,5,6],
+    color: '#556B2F',
+    states: 6
+  },
+  { label: "[44] Heated Water (B0345678/S124568/4)",
+    birth: [0,3,4,5,6,7,8],
+    survival: [1,2,4,5,6,8],
+    color: '#0000B7',
+    states: 4
+  },
+  { label: "[45] Just Rectangle (B012347/S58/2)",
+    birth: [0,1,2,3,4,7],
+    survival: [5,8],
+    color: '#4B0082',
+    states: 2
+  },
+  { label: "[46] Minecraft World Border (B012347/S123456/5)",
+    birth: [0,1,2,3,4,7],
+    survival: [1,2,3,4,5,6],
+    color: '#5A9BD4',
+    states: 5
+  },
+  { label: "[47] Virus (B367/S012345678/2)",
+    birth: [3,6,7],
+    survival: [0,1,2,3,4,5,6,7,8],
+    color: '#FF00FF',
+    states: 2
+  },
+  { label: "[48] Wallpaper (B012578/S012345678/2)",
+    birth: [0,1,2,5,7,8],
+    survival: [0,1,2,3,4,5,6,7,8],
+    color: '#0000CC',
+    states: 2
+  },
+  { label: "[49] Tangled Walls (B1234568/S0178/4)",
+    birth: [1,2,3,4,5,6,8],
+    survival: [0,1,7,8],
+    color: '#ADD8E6',
+    states: 4
+  },
+  { label: "[50] Assembly Maze (B18/S012/4)",
+    birth: [1,8],
+    survival: [0,1,2],
+    color: '#bf241e',
+    states: 4
+  },
+  { label: "[51] Geometric Triangle (B1/S0124678/6)",
+    birth: [1],
+    survival: [0,1,2,4,6,7,8],
+    color: '#b151ef',
+    states: 6
+  },
+  { label: "[52] Cracked Glass (B2458/S23457/6)",
+    birth: [2,4,5,8],
+    survival: [2,3,4,5,7],
+    color: '#ADD8E6',
+    states: 6
+  },
+  { label: "[53] Snack (B16/S1234568/3)",
+    birth: [1,6],
+    survival: [1,2,3,4,5,6,8],
+    color: '#FFD700',
+    states: 3
+  },
+  { label: "[54] Geometric Rectangle (B12478/S1345678/6)",
+    birth: [1,2,4,7,8],
+    survival: [1,3,4,5,6,7,8],
+    color: '#D23100',
+    states: 6
+  },
+  { label: "[55] Generative Maze (B01378/S1237/4)",
+    birth: [0,1,3,7,8],
+    survival: [1,2,3,7],
+    color: '#6b76e7',
+    states: 4
+  },
+  { label: "[56] Octagonal Cloud (B034578/S012346/6)",
+    birth: [0,3,4,5,7,8],
+    survival: [0,1,2,3,4,6],
+    color: '#FF69B4',
+    states: 6
+  },
+  { label: "[57] Ancient Pyramid (B1/S2345678)",
+    birth: [1],
+    survival: [2,3,4,5,6,7,8],
+    color: '#e6e8a1',
+    states: 1
+  },
+  { label: "[58] Manufacturing Grain (B12348/S457/6)",
+    birth: [1,2,3,4,8],
+    survival: [4,5,7],
+    color: '#d425e0',
+    states: 6
+  },
+  { label: "[59] Mainboard (B02478/S123458/3)",
+    birth: [0,2,4,7,8],
+    survival: [1,2,3,4,5,8],
+    color: '#1d8413',
+    states: 3
+  },
+  { label: "[60] Sponge2 (B136/S0234567)",
+    birth: [1,3,6],
+    survival: [0,2,3,4,5,6,7],
+    color: '#f4da24',
+    states: 1
+  },
+  { label: "[61] Old TV (B1248/S03467)",
+    birth: [1,2,4,8],
+    survival: [0,3,4,6,7],
+    color: '#dcdcc2',
+    states: 1
+  },
+  { label: "[62] Bug (B0158/S12356/6)",
+    birth: [0,1,5,8],
+    survival: [1,2,3,5,6],
+    color: '#937c9e',
+    states: 6
+  },
+  { label: "[62] Uranium (B0238/S045678/6)",
+    birth: [0,2,3,8],
+    survival: [0,4,5,6,7,8],
+    color: '#9be10d',
+    states: 6
+  },
+  { label: "[63] Unstable Maze (B348/S0123467)",
+    birth: [3,4,8],
+    survival: [0,1,2,3,4,6,7],
+    color: '#1ab7ab',
+    states: 1
+  },
+  { label: "[64] Unstable Star (B3458/S23/4)",
+    birth: [3,4,5,8],
+    survival: [2,3],
+    color: '#2be86f',
+    states: 4
+  },
+  { label: "[65] Fabric (B234567/S234567/6)",
+    birth: [2,3,4,5,6,7],
+    survival: [2,3,4,5,6,7],
+    color: '#26b1db',
+    states: 6
+  },
+  { label: "[66] Communication Device (B0237/S234568/6)",
+    birth: [0,2,3,7],
+    survival: [2,3,4,5,6,8],
+    color: '#7c85cf',
+    states: 6
+  },
+  { label: "[67] Perfect Line (B234567/S01578/6)",
+    birth: [2,3,4,5,6,7],
+    survival: [0,1,5,7,8],
+    color: '#9ef3fb',
+    states: 6
+  },
+  { label: "[68] Blinking Maze (B0345678/S16)",
+    birth: [0,3,4,5,6,7,8],
+    survival: [1,6],
+    color: '#ba7d51',
+    states: 1
+  },
+  { label: "[69] Conveyor Belt (B02468/S1234567/6)",
+    birth: [0,2,4,6,8],
+    survival: [1,2,3,4,5,6,7],
+    color: '#AAAAAA',
+    states: 6
+  },
+  { label: "[70] Maze-like Wall (B03456/S078)",
+    birth: [0,3,4,5,6],
+    survival: [0,7,8],
+    color: '#4d74a8',
+    states: 1
+  },
+  { label: "[71] Chessboard and Oil (B1237/S145678/6)",
+    birth: [1,2,3,7],
+    survival: [1,4,5,6,7,8],
+    color: '#e79a25',
+    states: 6
+  },
+  { label: "[72] Max Box (B15/S0467)",
+    birth: [1,5],
+    survival: [0,4,6,7],
+    color: '#6b6a94',
+    states: 1
+  },
+  { label: "[73] Spider Web Box (B12345/S23456/2)",
+    birth: [1,2,3,4,5],
+    survival: [2,3,4,5,6],
+    color: '#cfa7fc',
+    states: 2
+  },
+  { label: "[74] Electric Circuit (B02347/S012345/2)",
+    birth: [0,2,3,4,7],
+    survival: [0,1,2,3,4,5],
+    color: '#0904f6',
+    states: 2
+  },
+  { label: "[75] Broken Mirror (B458/S123458/3)",
+    birth: [4,5,8],
+    survival: [1,2,3,4,5,8],
+    color: '#8f9ead',
+    states: 3
+  },
+  { label: "[76] Chains and Cobwebs (B12378/S02345/6)",
+    birth: [1,2,3,7,8],
+    survival: [0,2,3,4,5],
+    color: '#f2efef',
+    states: 6
+  },
+  { label: "[77] Powder Propagation (B013468/S47/20)",
+    birth: [0,1,3,4,6,8],
+    survival: [4,7],
+    color: '#dc7047',
+    states: 20
+  },
+  { label: "[78] Mushroom (B345/S02347/18)",
+    birth: [3,4,5],
+    survival: [0,2,3,4,7],
+    color: '#bba26c',
+    states: 18
+  },
+  { label: "[79] Radio Communication (B01358/S5678/20)",
+    birth: [0,1,3,5,8],
+    survival: [5,6,7,8],
+    color: '#03b2b5',
+    states: 20
+  },
+  { label: "[80] X and Diamond (B368/S034578/15)",
+    birth: [3,6,8],
+    survival: [0,3,4,5,7,8],
+    color: '#7164c9',
+    states: 15
+  },
+  { label: "[81] Sandstorm (B01578/S56/16)",
+    birth: [0,1,5,7,8],
+    survival: [5,6],
+    color: '#fcbd29',
+    states: 16
+  },
+  { label: "[82] Distress Signal (B0234678/S035678/8)",
+    birth: [0,2,3,4,6,7,8],
+    survival: [0,3,5,6,7,8],
+    color: '#da6749',
+    states: 8
+  },
+  { label: "[83] Solid Water (B03478/S0145678/20)",
+    birth: [0,3,4,7,8],
+    survival: [0,1,4,5,6,7,8],
+    color: '#0f99ce',
+    states: 20
+  },
+  { label: "[84] Surface Tension (B0257/S345678/5)",
+    birth: [0,2,5,7],
+    survival: [3,4,5,6,7,8],
+    color: '#227dc7',
+    states: 5
+  },
+  { label: "[85] Slow Water (B3467/S145678/36)",
+    birth: [3,4,6,7],
+    survival: [1,4,5,6,7,8],
+    color: '#42c4e8',
+    states: 36
+  },
+  { label: "[86] Main Core (B03456/S124568/26)",
+    birth: [0,3,4,5,6],
+    survival: [1,2,4,5,6,8],
+    color: '#42c4e8',
+    states: 26
+  },
+  { label: "[87] Growth Maze (B38/S012378/18)",
+    birth: [3,8],
+    survival: [0,1,2,3,7,8],
+    color: '#a13bf7',
+    states: 18
+  },
+  { label: "[88] Four Missiles (B248/S038/13)",
+    birth: [2,4,8],
+    survival: [0,3,8],
+    color: '#9acd22',
+    states: 13
+  },
+  { label: "[88] Four Missiles 2 (B247/S03567/9)",
+    birth: [2,4,7],
+    survival: [0,3,5,6,7],
+    color: '#9acd32',
+    states: 9
+  },
+  { label: "[89] Carnivorous Plant (B02467/S345678/13)",
+    birth: [0,2,4,6,7],
+    survival: [3,4,5,6,7,8],
+    color: '#b957d5',
+    states: 13
+  },
+  { label: "[90] Into the Maze (B48/S23458/11)",
+    birth: [4,8],
+    survival: [2,3,4,5,8],
+    color: '#f7b5d1',
+    states: 11
+  },
+  { label: "[91] Duckweed (B0158/S345/12)",
+    birth: [0,1,5,8],
+    survival: [3,4,5],
+    color: '#76d027',
+    states: 12
+  },
+  { label: "[92] Moving Cobweb (B12368/S234567/13)",
+    birth: [1,2,3,6,8],
+    survival: [2,3,4,5,6,7],
+    color: '#e7dd89',
+    states: 13
+  },
+  { label: "[93] Island (B01567/S245678/14)",
+    birth: [0,1,5,6,7],
+    survival: [2,4,5,6,7,8],
+    color: '#ac3d3c',
+    states: 14
+  },
+  { label: "[94] Large Minecraft World Border (B023478/S023456/15)",
+    birth: [0,2,3,4,7,8],
+    survival: [0,2,3,4,5,6],
+    color: '#44a1dd',
+    states: 15
+  },
+  { label: "[95] Fish Egg (B04567/S034567/20)",
+    birth: [0,4,5,6,7],
+    survival: [0,3,4,5,6,7],
+    color: '#c4d113',
+    states: 20
+  },
+  { label: "[96] Shooting Star (B034578/S12345/20)",
+    birth: [0,3,4,5,7,8],
+    survival: [1,2,3,4,5],
+    color: '#ebbd0b',
+    states: 20
+  },
+  { label: "[97] Droplets and Surface Tension (B01568/S01235678/4)",
+    birth: [0,1,5,6,8],
+    survival: [0,1,2,3,5,6,7,8],
+    color: '#5ea2d2',
+    states: 4
+  },
+  { label: "[98] Shining Star (B0123457/S123456/20)",
+    birth: [0,1,2,3,4,5,7],
+    survival: [1,2,3,4,5,6],
+    color: '#FFDD00',
+    states: 20
+  },
+  { label: "[99] Variant Mainboard (B023/S123567/95)",
+    birth: [0,2,3],
+    survival: [1,2,3,5,6,7],
+    color: '#fee4ff',
+    states: 95
+  },
+  { label: "[100] Cross Wallpaper (B13/S24678/88)",
+    birth: [1,3],
+    survival: [2,4,6,7,8],
+    color: '#a8ccfb',
+    states: 88
+  },
+];
+
+// UI 엘리먼트
+const ruleSelect = document.getElementById('ruleSelect');
+const brushSizeEl = document.getElementById('brushSize');
+const togglePlayBtn = document.getElementById('togglePlayBtn');
+const randomBtn = document.getElementById('randomBtn');
+const customRuleInput = document.getElementById('customRuleInput');
+
+// ◆◆◆ 추가: Clear Board 버튼
+const clearBoardBtn = document.getElementById('clearBoardBtn');
+
+//===================================================================
+// (2) 동적으로 드롭다운 메뉴를 구성하는 함수
+//===================================================================
+function populateRuleSelect() {
+  ruleSelect.innerHTML = "";
+  rules.forEach((ruleObj, index) => {
+    const optionEl = document.createElement("option");
+    optionEl.value = index;
+    optionEl.textContent = ruleObj.label;
+    ruleSelect.appendChild(optionEl);
+  });
+}
+
+//===================================================================
+// (3) 이벤트 바인딩
+//===================================================================
+window.addEventListener('resize', onResize);
+
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  mouseX = e.clientX - rect.left;
+  mouseY = e.clientY - rect.top;
+  isMouseInside = true;
+  if (isMouseDown) {
+    spawnCells(e);
+  }
+});
+canvas.addEventListener('mouseleave', () => {
+  isMouseInside = false;
+});
+canvas.addEventListener('mousedown', e => {
+  isMouseDown = true;
+  spawnCells(e);
+});
+canvas.addEventListener('mouseup', () => {
+  isMouseDown = false;
+});
+
+// 마우스 휠 스크롤 -> 브러시 크기 조정
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (e.deltaY < 0) {
+    currentBrushSize++;
+  } else {
+    currentBrushSize--;
+  }
+  if (currentBrushSize < 1) currentBrushSize = 1;
+  if (currentBrushSize > 50) currentBrushSize = 50;
+  brushSizeEl.value = currentBrushSize;
+});
+
+// 브러시 사이즈 입력창 변경
+brushSizeEl.addEventListener('input', () => {
+  let val = parseInt(brushSizeEl.value, 10);
+  if (isNaN(val) || val < 1) val = 1;
+  if (val > 50) val = 50;
+  currentBrushSize = val;
+  brushSizeEl.value = val;
+});
+
+// 실행/멈춤 버튼
+togglePlayBtn.addEventListener('click', () => {
+  isRunning = !isRunning;
+  togglePlayBtn.textContent = isRunning ? 'Pause' : 'Play';
+});
+
+// 스페이스바로 실행/멈춤 토글
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space') {
+    e.preventDefault();
+    isRunning = !isRunning;
+    togglePlayBtn.textContent = isRunning ? 'Pause' : 'Play';
+  }
+});
+
+// ◆◆◆ 추가: Clear Board 버튼 클릭 -> 모든 셀을 죽은 상태로 만들기
+clearBoardBtn.addEventListener('click', clearAllCells);
+
+/** 
+ * ◆◆◆ 규칙을 '완전 랜덤'으로 만들어내는 'Random Rule' 버튼 핸들러 ◆◆◆
+ */
+randomBtn.addEventListener('click', () => {
+  const newRule = generateRandomRule();
+  // rules[]에 추가
+  const newIndex = rules.length;
+  rules.push(newRule);
+
+  // 드롭다운에 추가
+  const optionEl = document.createElement("option");
+  optionEl.value = newIndex;
+  optionEl.textContent = newRule.label;
+  ruleSelect.appendChild(optionEl);
+
+  // 해당 규칙을 선택
+  ruleSelect.value = newIndex;
+
+  // 텍스트박스 표시
+  customRuleInput.value = ruleToString(newRule);
+});
+
+/**
+ * 텍스트박스에서 사용자가 직접 규칙(B?/S?/states?)을 수정한 경우 파싱
+ */
+customRuleInput.addEventListener('change', () => {
+  parseCustomRule();
+});
+
+// 게임 루프 시작
+requestAnimationFrame(gameLoop);
+
+// 페이지가 로드되면, 드롭다운 채우기
+document.addEventListener('DOMContentLoaded', populateRuleSelect);
+
+//===================================================================
+// (4) 주요 함수들
+//===================================================================
+function createBoard(cols, rows) {
+  const arr = [];
+  for (let x = 0; x < cols; x++) {
+    arr[x] = [];
+    for (let y = 0; y < rows; y++) {
+      arr[x][y] = { state: 0, ruleIndex: -1 };
+    }
+  }
+  return arr;
+}
+
+function onResize() {
+  width = window.innerWidth;
+  height = window.innerHeight;
+  canvas.width = width;
+  canvas.height = height;
+
+  const newCols = Math.floor(width / cellSize);
+  const newRows = Math.floor(height / cellSize);
+  const newBoard = createBoard(newCols, newRows);
+
+  // 기존 보드 내용 복사
+  for (let x = 0; x < Math.min(cols, newCols); x++) {
+    for (let y = 0; y < Math.min(rows, newRows); y++) {
+      newBoard[x][y] = board[x][y];
+    }
+  }
+  board = newBoard;
+  cols = newCols;
+  rows = newRows;
+}
+
+function gameLoop() {
+  if (isRunning) {
+    computeNextGeneration();
+  }
+  render();
+  requestAnimationFrame(gameLoop);
+}
+
+function computeNextGeneration() {
+  const newBoard = createBoard(cols, rows);
+
+  for (let x = 0; x < cols; x++) {
+    for (let y = 0; y < rows; y++) {
+      const oldCell = board[x][y];
+      const oldState = oldCell.state;
+      const oldRuleIndex = oldCell.ruleIndex;
+
+      if (oldState > 0 && oldRuleIndex >= 0) {
+        // 살아있거나 dying 상태
+        const rule = rules[oldRuleIndex];
+        const neighborCount = countNeighbors(x, y);
+
+        if (rule.states === 1) {
+          // 단일상(Conway 등)
+          if (rule.survival.includes(neighborCount)) {
+            newBoard[x][y] = { state: 1, ruleIndex: oldRuleIndex };
+          } else {
+            newBoard[x][y] = { state: 0, ruleIndex: -1 };
+          }
+        } else {
+          // 다중상 (TPT Star 등)
+          if (oldState === 1) {
+            // 살아있는 단계
+            if (rule.survival.includes(neighborCount)) {
+              newBoard[x][y] = { state: 1, ruleIndex: oldRuleIndex };
+            } else {
+              // 사멸 시작
+              newBoard[x][y] = { state: 2, ruleIndex: oldRuleIndex };
+            }
+          } else {
+            // dying 단계
+            let nextS = oldState + 1;
+            if (nextS >= rule.states) {
+              nextS = 0; // 죽음
+            }
+            newBoard[x][y] = {
+              state: nextS,
+              ruleIndex: nextS > 0 ? oldRuleIndex : -1
+            };
+          }
+        }
+      } else {
+        // 완전히 죽은 셀
+        const neighborRuleCounts = countNeighborsByRule(x, y);
+        let maxCount = 0;
+        let bestRuleIndex = -1;
+        for (let i = 0; i < neighborRuleCounts.length; i++) {
+          if (neighborRuleCounts[i] > maxCount) {
+            maxCount = neighborRuleCounts[i];
+            bestRuleIndex = i;
+          }
+        }
+        if (bestRuleIndex >= 0 && maxCount > 0) {
+          const rule = rules[bestRuleIndex];
+          if (rule.birth.includes(maxCount)) {
+            newBoard[x][y] = { state: 1, ruleIndex: bestRuleIndex };
+          } else {
+            newBoard[x][y] = { state: 0, ruleIndex: -1 };
+          }
+        } else {
+          newBoard[x][y] = { state: 0, ruleIndex: -1 };
+        }
+      }
+    }
+  }
+  board = newBoard;
+}
+
+/**
+ * 살아있는 셀(state=1)만 이웃으로 계산
+ * dying(2~N)은 제외
+ */
+function countNeighbors(cx, cy) {
+  let count = 0;
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = cx + dx;
+      const ny = cy + dy;
+      if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
+        if (board[nx][ny].state === 1) {
+          count++;
+        }
+      }
+    }
+  }
+  return count;
+}
+
+/**
+ * rule별로 state=1인 이웃만 카운트
+ */
+function countNeighborsByRule(cx, cy) {
+  const arr = new Array(rules.length).fill(0);
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = cx + dx;
+      const ny = cy + dy;
+      if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
+        const neighbor = board[nx][ny];
+        if (neighbor.state === 1) {
+          arr[neighbor.ruleIndex]++;
+        }
+      }
+    }
+  }
+  return arr;
+}
+
+/**
+ * render
+ */
+function render() {
+  ctx.clearRect(0, 0, width, height);
+  for (let x = 0; x < cols; x++) {
+    for (let y = 0; y < rows; y++) {
+      const cell = board[x][y];
+      if (cell.state > 0) {
+        ctx.fillStyle = rules[cell.ruleIndex].color;
+        ctx.fillRect(x * cellSize, y * cellSize, cellSize, cellSize);
+      }
+    }
+  }
+
+  // 마우스 브러시 영역
+  if (isMouseInside) {
+    const size = currentBrushSize;
+    const half = Math.floor(size / 2);
+    const col = Math.floor(mouseX / cellSize);
+    const row = Math.floor(mouseY / cellSize);
+    const startX = (col - half) * cellSize;
+    const startY = (row - half) * cellSize;
+    const brushPixelSize = size * cellSize;
+
+    ctx.save();
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(startX, startY, brushPixelSize, brushPixelSize);
+    ctx.restore();
+  }
+}
+
+/**
+ * 마우스 클릭 시, 선택된 규칙으로 셀을 생성
+ */
+function spawnCells(e) {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const col = Math.floor(mx / cellSize);
+  const row = Math.floor(my / cellSize);
+
+  const size = currentBrushSize;
+  const half = Math.floor(size / 2);
+
+  const chosenRuleIndex = parseInt(ruleSelect.value, 10) || 0;
+
+  for (let i = -half; i <= half; i++) {
+    for (let j = -half; j <= half; j++) {
+      const nx = col + i;
+      const ny = row + j;
+      if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
+        board[nx][ny] = { state: 1, ruleIndex: chosenRuleIndex };
+      }
+    }
+  }
+}
+
+//===================================================================
+// (5) "완전 랜덤" 룰을 생성하는 함수
+//===================================================================
+function generateRandomRule() {
+  // B와 S에 들어갈 가능성이 있는 숫자: 0~8 중에서 랜덤하게 골라 넣기
+  const birthSet = randomSubset([0,1,2,3,4,5,6,7,8]);
+  const survivalSet = randomSubset([0,1,2,3,4,5,6,7,8]);
+
+  // states 값: 1~100 중 하나로 랜덤
+  const statesRand = Math.floor(Math.random() * 100) + 1;
+  
+  // 랜덤 컬러 생성
+  const colorRand = randomColor();
+
+  // 규칙 객체
+  const ruleObj = {
+    label: `[Custom] B${birthSet.join('')} / S${survivalSet.join('')} / ${statesRand}`,
+    birth: birthSet,
+    survival: survivalSet,
+    color: colorRand,
+    states: statesRand
+  };
+  return ruleObj;
+}
+
+// 임의의 부분집합 생성
+function randomSubset(arr) {
+  const result = [];
+  arr.forEach(num => {
+    if (Math.random() < 0.5) {
+      result.push(num);
+    }
+  });
+  // 아무것도 안 뽑혔다면 하나 넣어줌
+  if (result.length === 0) {
+    const randPick = arr[Math.floor(Math.random() * arr.length)];
+    result.push(randPick);
+  }
+  result.sort((a,b)=>a-b);
+  return result;
+}
+
+// 랜덤 컬러 생성: #RRGGBB
+function randomColor() {
+  return '#' + Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0');
+}
+
+//===================================================================
+// (6) "B?/S?/states?" 문자열 <-> rule 객체 간 변환
+//===================================================================
+function ruleToString(rule) {
+  const B = 'B' + rule.birth.join('');
+  const S = 'S' + rule.survival.join('');
+  const st = rule.states; 
+  return `${B}/${S}/${st}`;
+}
+
+function parseCustomRule() {
+  const idx = parseInt(ruleSelect.value, 10);
+  if (isNaN(idx) || idx < 0 || idx >= rules.length) return;
+
+  const str = customRuleInput.value.trim();
+  // 예) "B3/S23/1"
+  // 예) "B135/S2468/3"
+  const parts = str.split('/');
+  if (parts.length < 2) {
+    alert("룰 문자열 형식이 올바르지 않습니다. (예: B3/S23/1)");
+    return;
+  }
+
+  const bPart = parts[0].replace('B','');
+  const sPart = parts[1].replace('S','');
+  let stateVal = 1;
+  if (parts.length >= 3) {
+    stateVal = parseInt(parts[2], 10);
+    if (isNaN(stateVal) || stateVal < 1) stateVal = 1;
+  }
+
+  const newBirth = bPart.split('').map(ch=>parseInt(ch,10)).filter(n=>!isNaN(n));
+  const newSurvival = sPart.split('').map(ch=>parseInt(ch,10)).filter(n=>!isNaN(n));
+
+  const ruleObj = rules[idx];
+  ruleObj.birth = newBirth;
+  ruleObj.survival = newSurvival;
+  ruleObj.states = stateVal;
+
+  ruleObj.label = `[Custom] (B${bPart}/S${sPart}/${stateVal})`;
+  ruleSelect.options[idx].textContent = ruleObj.label;
+}
+
+//===================================================================
+// ◆◆◆ 추가 함수: 모든 셀을 '죽은 상태'로 만들기
+//===================================================================
+function clearAllCells() {
+  for (let x = 0; x < cols; x++) {
+    for (let y = 0; y < rows; y++) {
+      board[x][y].state = 0;
+      board[x][y].ruleIndex = -1;
+    }
+  }
+}
+</script>
+
+</body>
+</html>
