@@ -1,4 +1,7 @@
 The Cellular automaton includes simple basic rules, as well as some interesting ones.
+
+https://dev.bloupla.net/Cellular-automaton/
+
 ![image](https://github.com/user-attachments/assets/fa4e91ce-670e-4a66-a409-8a61f90df078)
 ![image](https://github.com/user-attachments/assets/03b272d8-9aef-47ed-8bb5-1732a2a55934)
 ![image](https://github.com/user-attachments/assets/492be65d-5df0-4eb5-bc45-9b57c6e18e00)
